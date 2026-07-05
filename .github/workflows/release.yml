@@ -1,0 +1,84 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bin: tsbox
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin: tsbox.exe
+            archive: zip
+          - os: macos-13
+            target: x86_64-apple-darwin
+            bin: tsbox
+            archive: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bin: tsbox
+            archive: tar.gz
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo test --all
+      - run: cargo build --release --target ${{ matrix.target }}
+      - name: Package Unix
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: |
+          VERSION="$(grep '^version =' Cargo.toml | head -n1 | sed -E 's/version = "([^"]+)"/\1/')"
+          NAME="tsbox-$VERSION-${{ matrix.target }}"
+          mkdir "$NAME"
+          cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" "$NAME/"
+          cp README.md USAGE.md "$NAME/"
+          tar -czf "$NAME.tar.gz" "$NAME"
+          shasum -a 256 "$NAME.tar.gz" > "$NAME.tar.gz.sha256"
+      - name: Package Windows
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"').Matches.Groups[1].Value
+          $name = "tsbox-$version-${{ matrix.target }}"
+          New-Item -ItemType Directory -Path $name | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.bin }}" "$name/"
+          Copy-Item README.md,USAGE.md "$name/"
+          Compress-Archive -Path $name -DestinationPath "$name.zip"
+          Get-FileHash "$name.zip" -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $name.zip" } | Set-Content "$name.zip.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tsbox-${{ matrix.target }}
+          path: |
+            tsbox-*-${{ matrix.target }}.tar.gz
+            tsbox-*-${{ matrix.target }}.tar.gz.sha256
+            tsbox-*-${{ matrix.target }}.zip
+            tsbox-*-${{ matrix.target }}.zip.sha256
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
