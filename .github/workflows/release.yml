@@ -23,7 +23,7 @@ jobs:
             target: x86_64-pc-windows-msvc
             bin: tsbox.exe
             archive: zip
-          - os: macos-13
+          - os: macos-latest
             target: x86_64-apple-darwin
             bin: tsbox
             archive: tar.gz
